@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This is a master stack which creates all required nested stacks.
+  
+Parameters:
+
+  EnvType:
+    Description: Environment type.
+    Default: dev
+    Type: String
+    AllowedValues: [prod, dev]
+    ConstraintDescription: must specify prod or dev.
+
+  CodePipelineName:
+    Description: CodePipeline Name.
+    Type: String
+
+  S3CodePipelineBucketName:
+    Description: S3 Bucket Name for CodePipeline artifact store.
+    Type: String
+  
+  TemplateFileName:
+    Type: String
+    Description: The cloudformation template to deploy (Or the root stack template).
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - EnvType
+      - Label:
+          default: CloudFormation Stack Info
+        Parameters:
+          - TemplateFileName
+          - StackConfig
+
+Conditions:
+  CreateProdResources: !Equals [!Ref EnvType, prod]
+  CreateDevResources: !Equals [!Ref EnvType, dev]
+  
+Resources:
+
+  GitHubTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}
+      Description: This secret has GitHub token in SecretString.
+      SecretString: !Sub '{"GitHubPersonalAccessToken":"${GitHubToken}","CFGitHubPersonalAccessToken":"${CFGitHubToken}"}'
+
+  Cluster:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "./cf-ecs.yaml"
+      Parameters:
+        EnvType: !Ref EnvType
+        DaysToRetainUntaggedContainerImages: !Ref DaysToRetainUntaggedContainerImages
+
+  DeploymentPipeline:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "./cf-app-pipeline.yaml"
+      Parameters:
+        EnvType: !Ref EnvType
+        CodePipelineName: !Ref CodePipelineName
+        S3CodePipelineBucketName: !Ref S3CodePipelineBucketName
+        CodeBuildSpecFileName: !Ref CodeBuildSpecFileName
+        ImageRepoNginx: !Ref ImageRepoNginx
+        ImageRepoLaravel: !Ref ImageRepoLaravel
+
+  CloudformationPipeline:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "./cf-cloudformation-pipeline.yaml"
+      Parameters:
+        S3CodePipelineBucketName: !Ref CFS3CodePipelineBucketName
+        CodeBuildSpecFileName: !Ref CFCodeBuildSpecFileName
+
+Outputs:
+  ServiceUrl:
+    Description: The sample service that is being continuously deployed.
+    Value: !GetAtt Cluster.Outputs.ECSALB
+
+  AppPipelineUrl:
+    Description: The continuous deployment pipeline for App in the AWS Management Console.
+    Value: !GetAtt DeploymentPipeline.Outputs.PipelineUrl
+
+  CloudformationPipelineUrl:
+    Description: The continuous deployment pipeline for CloudFormation in the AWS Management Console.
+    Value: !GetAtt CloudformationPipeline.Outputs.PipelineUrl
